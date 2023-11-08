@@ -6,14 +6,14 @@ use tokio::{
 };
 
 pub struct Connection {
-    socket: TcpStream,
+    stream: TcpStream,
     buffer: BytesMut,
 }
 
 impl Connection {
-    pub fn new(socket: TcpStream) -> Connection {
-        Connection {
-            socket,
+    pub fn new(stream: TcpStream) -> Self {
+        Self {
+            stream,
             buffer: BytesMut::with_capacity(4096),
         }
     }
@@ -28,22 +28,22 @@ impl Connection {
 
             None => {
                 // If we didn't find a frame, try to read more data from the socket
-                match self.socket.read_buf(&mut self.buffer).await {
+                match self.stream.read_buf(&mut self.buffer).await {
                     // Reading 0 bytes means the socket has been closed by the client
-                    Ok(0) => Some(TelnetFrame::Disconnected),
+                    Ok(0) => None,
 
                     // Reading some bytes means we should try to parse again
-                    Ok(_) => None,
+                    Ok(_) => Some(TelnetFrame::Next),
 
                     // Reading failed, so we assume the socket has been closed
-                    Err(_) => Some(TelnetFrame::Disconnected),
+                    Err(_) => None,
                 }
             }
         }
     }
 
     pub async fn send(&mut self, data: &[u8]) -> Result<()> {
-        self.socket.write_all(data).await?;
+        self.stream.write_all(data).await?;
 
         Ok(())
     }
@@ -51,10 +51,17 @@ impl Connection {
 
 #[derive(Debug, PartialEq)]
 pub enum TelnetFrame {
+    // Interpret as Command (IAC) telnet command
     IAC(Vec<u8>),
+
+    // Control Sequence Introducer (ANSI Escape sequence)
     CSI(Vec<u8>),
+
+    // Data frame contains raw bytes
     Data(Vec<u8>),
-    Disconnected,
+
+    // No frame available, but more data may be coming
+    Next,
 }
 
 impl TelnetFrame {

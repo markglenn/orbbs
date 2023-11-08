@@ -13,13 +13,13 @@ async fn main() -> Result<()> {
     loop {
         let (socket, addr) = listener.accept().await?;
 
-        println!("Accepted from: {}", addr);
+        println!("Accepted connection from: {}", addr);
 
         tokio::spawn(async move {
             match process(socket).await {
                 Ok(_) => println!("Connection closed from {}", addr),
                 Err(e) => println!("Failed to process connection: {}", e),
-            }
+            };
         });
     }
 }
@@ -33,23 +33,20 @@ async fn process(socket: TcpStream) -> Result<()> {
 
     loop {
         match connection.next_frame().await {
-            Some(TelnetFrame::IAC(_)) => {
-                println!("Telnet IAC frame received");
+            Some(TelnetFrame::IAC(iac)) => {
+                println!("Telnet IAC frame received: {:?}", iac);
             }
-            Some(TelnetFrame::CSI(_)) => {
-                println!("CSI frame received");
+            Some(TelnetFrame::CSI(f)) => {
+                println!("CSI frame received: {:?}", f);
             }
             Some(TelnetFrame::Data(r)) => {
                 println!("Data frame received: {:?}", r);
                 connection.send(r.as_slice()).await?;
             }
-            Some(TelnetFrame::Disconnected) => {
-                println!("Connection closed");
-                return Ok(());
-            }
+            Some(TelnetFrame::Next) => {}
 
             // No frame available
-            None => {}
+            None => return Ok(()),
         }
     }
 }
