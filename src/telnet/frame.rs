@@ -1,53 +1,4 @@
-use anyhow::Result;
 use bytes::{Buf, BytesMut};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
-
-pub struct Connection {
-    stream: TcpStream,
-    buffer: BytesMut,
-}
-
-impl Connection {
-    pub fn new(stream: TcpStream) -> Self {
-        Self {
-            stream,
-            buffer: BytesMut::with_capacity(4096),
-        }
-    }
-
-    pub async fn next_frame(&mut self) -> Option<TelnetFrame> {
-        match TelnetFrame::parse_iac(&mut self.buffer)
-            .or_else(|| TelnetFrame::parse_csi(&mut self.buffer))
-            .or_else(|| TelnetFrame::parse_data(&mut self.buffer))
-        {
-            // Some sort of frame exists, return it
-            Some(frame) => Some(frame),
-
-            None => {
-                // If we didn't find a frame, try to read more data from the socket
-                match self.stream.read_buf(&mut self.buffer).await {
-                    // Reading 0 bytes means the socket has been closed by the client
-                    Ok(0) => None,
-
-                    // Reading some bytes means we should try to parse again
-                    Ok(_) => Some(TelnetFrame::Next),
-
-                    // Reading failed, so we assume the socket has been closed
-                    Err(_) => None,
-                }
-            }
-        }
-    }
-
-    pub async fn send(&mut self, data: &[u8]) -> Result<()> {
-        self.stream.write_all(data).await?;
-
-        Ok(())
-    }
-}
 
 #[derive(Debug, PartialEq)]
 pub enum TelnetFrame {
@@ -65,7 +16,7 @@ pub enum TelnetFrame {
 }
 
 impl TelnetFrame {
-    fn parse_iac(buffer: &mut BytesMut) -> Option<Self> {
+    pub fn parse_iac(buffer: &mut BytesMut) -> Option<Self> {
         // Check the 2nd and 3rd byte
         match (buffer.get(0), buffer.get(1), buffer.get(2)) {
             // IAC + IAC
@@ -75,13 +26,21 @@ impl TelnetFrame {
             }
 
             // IAC + SB + ... + SE
-            (Some(0xFF), Some(&0xFA), _) => match buffer.binary_search(&0xF0) {
-                Ok(i) => {
-                    let iac = buffer.split_to(i + 1);
-                    return Some(Self::IAC(iac.to_vec()));
+            (Some(0xFF), Some(&0xFA), _) => {
+                // Needle is equivalent to IAC + SE
+                let needle = &[0xFF, 0xF0];
+
+                // Find it in the "haystack"
+                match buffer.windows(2).position(|p| p == needle) {
+                    Some(i) => {
+                        // We found the subsequence, so split after it (including the needle)
+                        let iac = buffer.split_to(i + 2).to_vec();
+
+                        return Some(Self::IAC(iac));
+                    }
+                    None => None,
                 }
-                Err(_) => None,
-            },
+            }
 
             // IAC + WILL/WONT/DO/DONT + OPTION
             (Some(0xFF), Some(_), Some(_)) => {

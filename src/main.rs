@@ -1,7 +1,11 @@
-mod connection;
+mod telnet;
 
 use anyhow::Result;
-use connection::{Connection, TelnetFrame};
+use telnet::{
+    connection::Connection,
+    frame::TelnetFrame,
+    negotiation::{TelnetAction, TelnetOption},
+};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
@@ -27,9 +31,22 @@ async fn main() -> Result<()> {
 async fn process(socket: TcpStream) -> Result<()> {
     let mut connection = Connection::new(socket);
 
-    // Enable echo and suppress go ahead
-    connection.send(&[0xFF, 0xFB, 0x01]).await?;
-    connection.send(&[0xFF, 0xFB, 0x03]).await?;
+    // Enable server echo
+    connection
+        .send_negotiation(TelnetAction::Will, TelnetOption::Echo)
+        .await?;
+
+    // Enable suppress go ahead
+    connection
+        .send_negotiation(TelnetAction::Will, TelnetOption::SuppressGoAhead)
+        .await?;
+
+    // Ask the client to enable sending terminal type
+    connection
+        .send_negotiation(TelnetAction::Do, TelnetOption::TerminalType)
+        .await?;
+
+    connection.request_terminal_type().await?;
 
     loop {
         match connection.next_frame().await {
